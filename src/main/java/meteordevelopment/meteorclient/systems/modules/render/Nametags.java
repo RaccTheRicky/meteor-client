@@ -30,6 +30,7 @@ import net.minecraft.enchantment.Enchantments;
 import net.minecraft.entity.*;
 import net.minecraft.entity.decoration.ItemFrameEntity;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.entity.projectile.thrown.EnderPearlEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
@@ -41,7 +42,6 @@ import java.util.*;
 public class Nametags extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgPlayers = settings.createGroup("Players");
-    private final SettingGroup sgItems = settings.createGroup("Items");
     private final SettingGroup sgRender = settings.createGroup("Render");
 
     // General
@@ -49,7 +49,7 @@ public class Nametags extends Module {
     private final Setting<Set<EntityType<?>>> entities = sgGeneral.add(new EntityTypeListSetting.Builder()
         .name("entities")
         .description("Select entities to draw nametags on.")
-        .defaultValue(EntityType.PLAYER, EntityType.ITEM)
+        .defaultValue(EntityType.PLAYER, EntityType.ENDER_PEARL)
         .build()
     );
 
@@ -68,13 +68,6 @@ public class Nametags extends Module {
         .build()
     );
 
-    private final Setting<Boolean> ignoreFriends = sgGeneral.add(new BoolSetting.Builder()
-        .name("ignore-friends")
-        .description("Ignore rendering nametags for friends.")
-        .defaultValue(false)
-        .build()
-    );
-
     private final Setting<Boolean> ignoreBots = sgGeneral.add(new BoolSetting.Builder()
         .name("ignore-bots")
         .description("Only render non-bot nametags.")
@@ -82,10 +75,17 @@ public class Nametags extends Module {
         .build()
     );
 
+    private final Setting<Boolean> ignoreFriends = sgGeneral.add(new BoolSetting.Builder()
+        .name("ignore-friends")
+        .description("Ignore rendering nametags for friends.")
+        .defaultValue(false)
+        .build()
+    );
+
     private final Setting<Boolean> culling = sgGeneral.add(new BoolSetting.Builder()
         .name("culling")
         .description("Only render a certain number of nametags at a certain distance.")
-        .defaultValue(false)
+        .defaultValue(true)
         .build()
     );
 
@@ -118,6 +118,20 @@ public class Nametags extends Module {
         .build()
     );
 
+    private final Setting<Boolean> displayPing = sgPlayers.add(new BoolSetting.Builder()
+        .name("ping")
+        .description("Shows the player's ping.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> displayPops = sgPlayers.add(new BoolSetting.Builder()
+        .name("pops")
+        .description("Shows how many totems a player has popped. (Must have notifier enabled!)")
+        .defaultValue(true)
+        .build()
+    );
+
     private final Setting<Boolean> displayGameMode = sgPlayers.add(new BoolSetting.Builder()
         .name("gamemode")
         .description("Shows the player's GameMode.")
@@ -129,13 +143,6 @@ public class Nametags extends Module {
         .name("distance")
         .description("Shows the distance between you and the player.")
         .defaultValue(false)
-        .build()
-    );
-
-    private final Setting<Boolean> displayPing = sgPlayers.add(new BoolSetting.Builder()
-        .name("ping")
-        .description("Shows the player's ping.")
-        .defaultValue(true)
         .build()
     );
 
@@ -209,15 +216,6 @@ public class Nametags extends Module {
         .range(0.1, 2)
         .sliderRange(0.1, 2)
         .visible(() -> displayItems.get() && displayEnchants.get())
-        .build()
-    );
-
-    //Items
-
-    private final Setting<Boolean> itemCount = sgItems.add(new BoolSetting.Builder()
-        .name("show-count")
-        .description("Displays the number of items in the stack.")
-        .defaultValue(true)
         .build()
     );
 
@@ -316,7 +314,8 @@ public class Nametags extends Module {
                 if (Friends.get().isFriend((PlayerEntity) entity) && ignoreFriends.get()) continue;
             }
 
-            if (!culling.get() || PlayerUtils.isWithinCamera(entity, maxCullRange.get())) {
+            // Pearls should ignore culling, otherwise having the names only render for a second or so is useless
+            if (!culling.get() || PlayerUtils.isWithinCamera(entity, maxCullRange.get()) || entity instanceof EnderPearlEntity) {
                 entityList.add(entity);
             }
         }
@@ -339,9 +338,9 @@ public class Nametags extends Module {
 
             if (NametagUtils.to2D(pos, scale.get())) {
                 if (type == EntityType.PLAYER) renderNametagPlayer(event, (PlayerEntity) entity, shadow);
+                else if (type == EntityType.ENDER_PEARL) renderPearlNametag((EnderPearlEntity) entity, shadow);
                 else if (type == EntityType.ITEM) renderNametagItem(((ItemEntity) entity).getStack(), shadow);
-                else if (type == EntityType.ITEM_FRAME)
-                    renderNametagItem(((ItemFrameEntity) entity).getHeldItemStack(), shadow);
+                else if (type == EntityType.ITEM_FRAME) renderNametagItem(((ItemFrameEntity) entity).getHeldItemStack(), shadow);
                 else if (type == EntityType.TNT) renderTntNametag((TntEntity) entity, shadow);
                 else if (entity instanceof LivingEntity) renderGenericNametag((LivingEntity) entity, shadow);
             }
@@ -558,7 +557,7 @@ public class Nametags extends Module {
         double heightDown = text.getHeight(shadow);
 
         double width = nameWidth;
-        if (itemCount.get()) width += countWidth;
+        width += countWidth;
         double widthHalf = width / 2;
 
         drawBg(-widthHalf, -heightDown, width, heightDown);
@@ -568,7 +567,57 @@ public class Nametags extends Module {
         double hY = -heightDown;
 
         hX = text.render(name, hX, hY, nameColor.get(), shadow);
-        if (itemCount.get()) text.render(count, hX, hY, GOLD, shadow);
+        text.render(count, hX, hY, GOLD, shadow);
+        text.end();
+
+        NametagUtils.end();
+    }
+
+    private void renderTntNametag(TntEntity entity, boolean shadow) {
+        TextRenderer text = TextRenderer.get();
+        NametagUtils.begin(pos);
+
+        String fuseText = ticksToTime(entity.getFuse());
+
+        double width = text.getWidth(fuseText, shadow);
+        double heightDown = text.getHeight(shadow);
+
+        double widthHalf = width / 2;
+
+        drawBg(-widthHalf, -heightDown, width, heightDown);
+
+        text.beginBig();
+        double hX = -widthHalf;
+        double hY = -heightDown;
+
+        text.render(fuseText, hX, hY, nameColor.get(), shadow);
+        text.end();
+
+        NametagUtils.end();
+    }
+
+    private void renderPearlNametag(EnderPearlEntity entity, boolean shadow) {
+        Entity owner = entity.getOwner();
+        if (!(owner instanceof PlayerEntity player)) return;
+
+        TextRenderer text = TextRenderer.get();
+        NametagUtils.begin(pos);
+
+        NameProtect nameProtect = Modules.get().get(NameProtect.class);
+        String ownerName = (mc.player == player) ? nameProtect.getName(player.getEntityName()) : player.getEntityName();
+
+        double width = text.getWidth(ownerName, shadow);
+        double heightDown = text.getHeight(shadow);
+
+        double widthHalf = width / 2;
+
+        drawBg(-widthHalf, -heightDown, width, heightDown);
+
+        text.beginBig();
+        double hX = -widthHalf;
+        double hY = -heightDown;
+
+        text.render(ownerName, hX, hY, nameColor.get(), shadow);
         text.end();
 
         NametagUtils.end();
@@ -578,11 +627,11 @@ public class Nametags extends Module {
         TextRenderer text = TextRenderer.get();
         NametagUtils.begin(pos);
 
-        //Name
+        // Name
         String nameText = entity.getType().getName().getString();
         nameText += " ";
 
-        //Health
+        // Health
         float absorption = entity.getAbsorptionAmount();
         int health = Math.round(entity.getHealth() + absorption);
         double healthPercentage = health / (entity.getMaxHealth() + absorption);
@@ -614,28 +663,7 @@ public class Nametags extends Module {
         NametagUtils.end();
     }
 
-    private void renderTntNametag(TntEntity entity, boolean shadow) {
-        TextRenderer text = TextRenderer.get();
-        NametagUtils.begin(pos);
 
-        String fuseText = ticksToTime(entity.getFuse());
-
-        double width = text.getWidth(fuseText, shadow);
-        double heightDown = text.getHeight(shadow);
-
-        double widthHalf = width / 2;
-
-        drawBg(-widthHalf, -heightDown, width, heightDown);
-
-        text.beginBig();
-        double hX = -widthHalf;
-        double hY = -heightDown;
-
-        text.render(fuseText, hX, hY, nameColor.get(), shadow);
-        text.end();
-
-        NametagUtils.end();
-    }
 
     private ItemStack getItem(PlayerEntity entity, int index) {
         return switch (index) {
@@ -662,7 +690,7 @@ public class Nametags extends Module {
 
     public enum DistanceColorMode {
         Gradient,
-        Flat;
+        Flat
     }
 
     public boolean excludeBots() {
