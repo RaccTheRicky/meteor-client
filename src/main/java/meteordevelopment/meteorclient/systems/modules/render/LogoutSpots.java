@@ -5,6 +5,7 @@
 
 package meteordevelopment.meteorclient.systems.modules.render;
 
+import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.game.GameJoinedEvent;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
@@ -29,10 +30,12 @@ import net.minecraft.client.sound.PositionedSoundInstance;
 import net.minecraft.client.sound.SoundInstance;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.sound.SoundEvents;
-import net.minecraft.text.Text;
 import org.joml.Vector3d;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.UUID;
 
 public class LogoutSpots extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -148,10 +151,8 @@ public class LogoutSpots extends Module {
     private void onTick(TickEvent.Post event) {
         ArrayList<PlayerListEntry> playerList = new ArrayList<>(mc.getNetworkHandler().getPlayerList());
         playerList.removeIf(entry -> {
-            String entryName = Optional
-                .ofNullable(entry.getDisplayName())
-                .map(Text::getString).orElse("");
-            return entryName.isEmpty();
+            if (entry.getDisplayName() == null) return true;
+            return entry.getDisplayName().getString().isEmpty();
         });
 
         // Leaving Players
@@ -177,7 +178,6 @@ public class LogoutSpots extends Module {
                 break;
             }
         }
-
         // Rejoining players
         for (PlayerListEntry entry: playerList) {
             if (lastPlayerList.contains(entry)) continue;
@@ -216,12 +216,17 @@ public class LogoutSpots extends Module {
     @EventHandler
     private void onRender3D(Render3DEvent event) {
         Dimension currentDimension = PlayerUtils.getDimension();
+        float originalDelta = event.tickDelta;
+
         for (LogoutSpot logoutSpot: logoutSpots) {
             if (logoutSpot.dimension != currentDimension) return;
             if (!PlayerUtils.isWithinCamera(logoutSpot.player.getPos(), mc.options.getViewDistance().getValue() * 16)) return;
 
+            event.tickDelta = logoutSpot.tickDelta;
             WireframeEntityRenderer.render(event, logoutSpot.player, 1.0, sideColor.get(), lineColor.get(), this.shapeMode.get());
         }
+
+        event.tickDelta = originalDelta;
     }
 
     @EventHandler
@@ -266,6 +271,7 @@ public class LogoutSpots extends Module {
     private static class LogoutSpot {
         public final Dimension dimension;
         public final PlayerEntity player;
+        public final float tickDelta;
 
         public final UUID uuid;
         public final String name;
@@ -275,6 +281,7 @@ public class LogoutSpots extends Module {
         public LogoutSpot(PlayerEntity player) {
             dimension = PlayerUtils.getDimension();
             this.player = player;
+            tickDelta = MeteorClient.mc.getTickDelta();
 
             uuid = player.getUuid();
             name = player.getEntityName();
