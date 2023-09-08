@@ -271,6 +271,10 @@ public class Notifier extends Module {
         return chatIdMap.computeIfAbsent(entity.getUuid(), value -> random.nextInt());
     }
 
+    public int getPops(PlayerEntity player) {
+        return (isActive()) ? totemPopMap.getOrDefault(player.getUuid(), 0) : 0;
+    }
+
     public enum Event {
         Spawn,
         Despawn,

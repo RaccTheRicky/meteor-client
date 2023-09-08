@@ -16,6 +16,7 @@ import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.systems.modules.misc.NameProtect;
+import meteordevelopment.meteorclient.systems.modules.misc.Notifier;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.entity.EntityUtils;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
@@ -29,9 +30,11 @@ import net.minecraft.enchantment.EnchantmentHelper;
 import net.minecraft.enchantment.Enchantments;
 import net.minecraft.entity.*;
 import net.minecraft.entity.decoration.ItemFrameEntity;
+import net.minecraft.entity.passive.TameableEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.projectile.thrown.EnderPearlEntity;
 import net.minecraft.item.ItemStack;
+import net.minecraft.text.Text;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.GameMode;
@@ -128,7 +131,7 @@ public class Nametags extends Module {
     private final Setting<Boolean> displayPops = sgPlayers.add(new BoolSetting.Builder()
         .name("pops")
         .description("Shows how many totems a player has popped. (Must have notifier enabled!)")
-        .defaultValue(true)
+        .defaultValue(false)
         .build()
     );
 
@@ -243,6 +246,14 @@ public class Nametags extends Module {
         .build()
     );
 
+    private final Setting<SettingColor> popsColor = sgRender.add(new ColorSetting.Builder()
+        .name("pops-color")
+        .description("The color of the pops amount.")
+        .defaultValue(new SettingColor(20, 170, 170))
+        .visible(displayPops::get)
+        .build()
+    );
+
     private final Setting<SettingColor> gamemodeColor = sgRender.add(new ColorSetting.Builder()
         .name("gamemode-color")
         .description("The color of the nametag gamemode.")
@@ -333,17 +344,17 @@ public class Nametags extends Module {
 
             Utils.set(pos, entity, event.tickDelta);
             pos.add(0, getHeight(entity), 0);
+            if (!NametagUtils.to2D(pos, scale.get())) continue;
 
             EntityType<?> type = entity.getType();
 
-            if (NametagUtils.to2D(pos, scale.get())) {
-                if (type == EntityType.PLAYER) renderNametagPlayer(event, (PlayerEntity) entity, shadow);
-                else if (type == EntityType.ENDER_PEARL) renderPearlNametag((EnderPearlEntity) entity, shadow);
-                else if (type == EntityType.ITEM) renderNametagItem(((ItemEntity) entity).getStack(), shadow);
-                else if (type == EntityType.ITEM_FRAME) renderNametagItem(((ItemFrameEntity) entity).getHeldItemStack(), shadow);
-                else if (type == EntityType.TNT) renderTntNametag((TntEntity) entity, shadow);
-                else if (entity instanceof LivingEntity) renderGenericNametag((LivingEntity) entity, shadow);
-            }
+            if (type == EntityType.PLAYER) renderNametagPlayer(event, (PlayerEntity) entity, shadow);
+            else if (type == EntityType.ENDER_PEARL) renderPearlNametag((EnderPearlEntity) entity, shadow);
+            else if (type == EntityType.ITEM) renderNametagItem(((ItemEntity) entity).getStack(), shadow);
+            else if (type == EntityType.ITEM_FRAME) renderNametagItem(((ItemFrameEntity) entity).getHeldItemStack(), shadow);
+            else if (type == EntityType.TNT) renderTntNametag((TntEntity) entity, shadow);
+            else if (entity instanceof TameableEntity tameable) renderTameableNametag(tameable, shadow);
+            else if (entity instanceof LivingEntity living) renderGenericNametag(living, shadow);
         }
     }
 
@@ -372,20 +383,6 @@ public class Nametags extends Module {
         TextRenderer text = TextRenderer.get();
         NametagUtils.begin(pos, event.drawContext);
 
-        // Gamemode
-        GameMode gm = EntityUtils.getGameMode(player);
-        String gmText = "BOT";
-        if (gm != null) {
-            gmText = switch (gm) {
-                case SPECTATOR -> "Sp";
-                case SURVIVAL -> "S";
-                case CREATIVE -> "C";
-                case ADVENTURE -> "A";
-            };
-        }
-
-        gmText = "[" + gmText + "] ";
-
         // Name
         String name;
         Color nameColor = PlayerUtils.getPlayerColor(player, this.nameColor.get());
@@ -409,15 +406,33 @@ public class Nametags extends Module {
         int ping = EntityUtils.getPing(player);
         String pingText = " [" + ping + "ms]";
 
+        // Pops
+        Notifier notifier = Modules.get().get(Notifier.class);
+        String popsText = " [" + notifier.getPops(player) + "]";
+
+        // Gamemode
+        GameMode gm = EntityUtils.getGameMode(player);
+        String gmText = "BOT";
+        if (gm != null) {
+            gmText = switch (gm) {
+                case SPECTATOR -> "Sp";
+                case SURVIVAL -> "S";
+                case CREATIVE -> "C";
+                case ADVENTURE -> "A";
+            };
+        }
+        gmText = "[" + gmText + "] ";
+
         // Distance
         double dist = Math.round(PlayerUtils.distanceToCamera(player) * 10.0) / 10.0;
         String distText = " " + dist + "m";
 
         // Calc widths
-        double gmWidth = text.getWidth(gmText, shadow);
         double nameWidth = text.getWidth(name, shadow);
         double healthWidth = text.getWidth(healthText, shadow);
         double pingWidth = text.getWidth(pingText, shadow);
+        double popsWidth = text.getWidth(popsText, shadow);
+        double gmWidth = text.getWidth(gmText, shadow);
         double distWidth = text.getWidth(distText, shadow);
 
         double width = nameWidth;
@@ -427,6 +442,7 @@ public class Nametags extends Module {
         if (displayHealth.get()) width += healthWidth;
         if (displayGameMode.get()) width += gmWidth;
         if (displayPing.get()) width += pingWidth;
+        if (displayPops.get()) width += popsWidth;
         if (displayDistance.get() && renderPlayerDistance) width += distWidth;
 
         double widthHalf = width / 2;
@@ -444,6 +460,7 @@ public class Nametags extends Module {
 
         if (displayHealth.get()) hX = text.render(healthText, hX, hY, healthColor, shadow);
         if (displayPing.get()) hX = text.render(pingText, hX, hY, pingColor.get(), shadow);
+        if (displayPops.get()) hX = text.render(popsText, hX, hY, popsColor.get(), shadow);
         if (displayDistance.get() && renderPlayerDistance) {
             switch (distanceColorMode.get()) {
                 case Flat ->  text.render(distText, hX, hY, distanceColor.get(), shadow);
@@ -623,6 +640,50 @@ public class Nametags extends Module {
         NametagUtils.end();
     }
 
+    private void renderTameableNametag(TameableEntity entity, boolean shadow) {
+        TextRenderer text = TextRenderer.get();
+        NametagUtils.begin(pos);
+
+        // Entity Name
+        String nameText = Optional
+            .ofNullable(entity.getCustomName()).map(Text::getString)
+            .orElse(entity.getType().getName().getString());
+        nameText += " ";
+
+        // Owner Name
+
+        // Health
+        float absorption = entity.getAbsorptionAmount();
+        int health = Math.round(entity.getHealth() + absorption);
+        double healthPercentage = health / (entity.getMaxHealth() + absorption);
+
+        String healthText = String.valueOf(health);
+        Color healthColor;
+
+        if (healthPercentage <= 0.333) healthColor = RED;
+        else if (healthPercentage <= 0.666) healthColor = AMBER;
+        else healthColor = GREEN;
+
+        double nameWidth = text.getWidth(nameText, shadow);
+        double healthWidth = text.getWidth(healthText, shadow);
+        double heightDown = text.getHeight(shadow);
+
+        double width = nameWidth + healthWidth;
+        double widthHalf = width / 2;
+
+        drawBg(-widthHalf, -heightDown, width, heightDown);
+
+        text.beginBig();
+        double hX = -widthHalf;
+        double hY = -heightDown;
+
+        hX = text.render(nameText, hX, hY, nameColor.get(), shadow);
+        text.render(healthText, hX, hY, healthColor, shadow);
+        text.end();
+
+        NametagUtils.end();
+    }
+
     private void renderGenericNametag(LivingEntity entity, boolean shadow) {
         TextRenderer text = TextRenderer.get();
         NametagUtils.begin(pos);
@@ -697,7 +758,11 @@ public class Nametags extends Module {
         return ignoreBots.get();
     }
 
-    public boolean playerNametags() {
-        return isActive() && entities.get().contains(EntityType.PLAYER);
+    public boolean doPlayerNametags() {
+        return !isActive() || !entities.get().contains(EntityType.PLAYER);
+    }
+
+    public boolean doEntityNametag(TameableEntity entity) {
+        return !isActive() || !entities.get().contains(entity.getType());
     }
 }

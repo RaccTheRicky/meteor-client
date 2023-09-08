@@ -19,6 +19,7 @@ import net.minecraft.client.render.entity.EntityRenderer;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.FallingBlockEntity;
+import net.minecraft.entity.passive.TameableEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
@@ -38,12 +39,20 @@ public abstract class EntityRendererMixin<T extends Entity> implements IEntityRe
     private void onRenderLabel(T entity, Text text, MatrixStack matrices, VertexConsumerProvider vertexConsumers, int light, CallbackInfo info) {
         if (PostProcessShaders.rendering) info.cancel();
         if (Modules.get().get(NoRender.class).noNametags()) info.cancel();
-        if (!(entity instanceof PlayerEntity)) return;
-        if (Modules.get().get(Nametags.class).playerNametags() && !(EntityUtils.getGameMode((PlayerEntity) entity) == null && Modules.get().get(Nametags.class).excludeBots()))
-            info.cancel();
+        Nametags nameTags = Modules.get().get(Nametags.class);
+
+        if (entity instanceof PlayerEntity player && !nameTags.doPlayerNametags()) {
+            if (EntityUtils.getGameMode(player) != null || !nameTags.excludeBots()) {
+                info.cancel();
+            }
+        }
+
+        if (entity instanceof TameableEntity tameable) {
+            if (!nameTags.doEntityNametag(tameable)) info.cancel();
+        }
     }
 
-    @Inject(method = "shouldRender", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "shouldRender", at = @At("HEAD"))
     private void shouldRender(T entity, Frustum frustum, double x, double y, double z, CallbackInfoReturnable<Boolean> cir) {
         if (Modules.get().get(NoRender.class).noEntity(entity)) cir.cancel();
         if (Modules.get().get(NoRender.class).noFallingBlocks() && entity instanceof FallingBlockEntity) cir.cancel();
