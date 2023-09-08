@@ -5,8 +5,7 @@
 
 package meteordevelopment.meteorclient.systems.modules.render;
 
-import meteordevelopment.meteorclient.MeteorClient;
-import meteordevelopment.meteorclient.events.entity.EntityAddedEvent;
+import meteordevelopment.meteorclient.events.game.GameJoinedEvent;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -20,19 +19,19 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.entity.EntityUtils;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.render.NametagUtils;
+import meteordevelopment.meteorclient.utils.render.WireframeEntityRenderer;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.meteorclient.utils.world.Dimension;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.network.PlayerListEntry;
-import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Vec3d;
 import org.joml.Vector3d;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.UUID;
 
 public class LogoutSpots extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -61,15 +60,15 @@ public class LogoutSpots extends Module {
         .build()
     );
 
-    private final Setting<Double> scale = sgGeneral.add(new DoubleSetting.Builder()
-        .name("scale")
-        .description("The scale.")
-        .defaultValue(1)
+    // Render
+
+    private final Setting<Double> scale = sgRender.add(new DoubleSetting.Builder()
+        .name("text-scale")
+        .description("The scale of the nametag.")
+        .defaultValue(1.0)
         .min(0)
         .build()
     );
-
-    // Render
 
     private final Setting<ShapeMode> shapeMode = sgRender.add(new EnumSetting.Builder<ShapeMode>()
         .name("shape-mode")
@@ -128,14 +127,25 @@ public class LogoutSpots extends Module {
 
     @Override
     public void onDeactivate() {
-        logoutSpots.clear();
         lastPlayerList.clear();
+        logoutSpots.clear();
+        lastPlayers.clear();
+    }
+
+    @EventHandler
+    public void onGameJoin(GameJoinedEvent event) {
+        lastPlayerList.clear();
+        logoutSpots.clear();
+        lastPlayers.clear();
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
         ArrayList<PlayerListEntry> playerList = new ArrayList<>(mc.getNetworkHandler().getPlayerList());
-        playerList.removeIf(entry -> entry.getProfile().getName().isEmpty());
+        playerList.removeIf(entry -> {
+            String entryName = entry.getDisplayName().getString();
+            return (entryName == null || entryName.isEmpty());
+        });
 
         // Leaving Players
         for (PlayerListEntry entry: lastPlayerList) {
@@ -151,7 +161,7 @@ public class LogoutSpots extends Module {
                 logoutSpots.removeIf(logoutSpot -> logoutSpot.uuid.equals(logSpot.uuid) );
                 logoutSpots.add(logSpot);
 
-                if (notifyLeave.get()) info("%s logged out at %d, %d, %d in the %s",
+                if (notifyLeave.get()) warning("%s logged out at %d, %d, %d in the %s.",
                         logSpot.player.getEntityName(), logSpot.player.getBlockX(), logSpot.player.getBlockY(),
                         logSpot.player.getBlockZ(), logSpot.dimension.toString()
                 );
@@ -169,7 +179,7 @@ public class LogoutSpots extends Module {
                 LogoutSpot logSpot = iterator.next();
                 if (!logSpot.uuid.equals(entry.getProfile().getId())) continue;
 
-                if (notifyRejoin.get()) info("%s logged back in at %d, %d, %d in the %s",
+                if (notifyRejoin.get()) warning("%s logged back in at %d, %d, %d in the %s.",
                         logSpot.player.getEntityName(), logSpot.player.getBlockX(), logSpot.player.getBlockY(),
                         logSpot.player.getBlockZ(), logSpot.dimension.toString()
                 );
@@ -196,18 +206,23 @@ public class LogoutSpots extends Module {
 
     @EventHandler
     private void onRender3D(Render3DEvent event) {
+        Dimension currentDimension = PlayerUtils.getDimension();
         for (LogoutSpot logoutSpot: logoutSpots) {
+            if (logoutSpot.dimension != currentDimension) return;
             if (!PlayerUtils.isWithinCamera(logoutSpot.player.getPos(), mc.options.getViewDistance().getValue() * 16)) return;
-            event.renderer.box(logoutSpot.player.getBoundingBox(), sideColor.get(), lineColor.get(), shapeMode.get(), 0);
+
+            WireframeEntityRenderer.render(event, logoutSpot.player, 1.0, sideColor.get(), lineColor.get(), this.shapeMode.get());
         }
     }
 
     @EventHandler
     private void onRender2D(Render2DEvent event) {
+        Dimension currentDimension = PlayerUtils.getDimension();
         for (LogoutSpot logoutSpot : logoutSpots) {
+            if (logoutSpot.dimension != currentDimension) return;
             if (!PlayerUtils.isWithinCamera(logoutSpot.player.getPos(), mc.options.getViewDistance().getValue() * 16)) return;
 
-            double scale = LogoutSpots.this.scale.get();
+            double scale = this.scale.get();
             pos.set(
                 logoutSpot.player.getBoundingBox().getCenter().x ,
                 logoutSpot.player.getBoundingBox().maxY + 0.5,
