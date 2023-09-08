@@ -25,13 +25,14 @@ import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.meteorclient.utils.world.Dimension;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.network.PlayerListEntry;
+import net.minecraft.client.sound.PositionedSoundInstance;
+import net.minecraft.client.sound.SoundInstance;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.sound.SoundEvents;
+import net.minecraft.text.Text;
 import org.joml.Vector3d;
 
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 
 public class LogoutSpots extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -46,17 +47,17 @@ public class LogoutSpots extends Module {
         .build()
     );
 
-    private final Setting<Boolean> notifyLeave = sgGeneral.add(new BoolSetting.Builder()
-        .name("notify-on-leave")
-        .description("Send a message in chat when a player logs out.")
-        .defaultValue(true)
+    public final Setting<NotifyMode> sendMessages = sgGeneral.add(new EnumSetting.Builder<NotifyMode>()
+        .name("send-message")
+        .description("Send messages to chat when someone leaves/rejoins.")
+        .defaultValue(NotifyMode.Both)
         .build()
     );
 
-    private final Setting<Boolean> notifyRejoin = sgGeneral.add(new BoolSetting.Builder()
-        .name("notify-on-rejoin")
-        .description("Send a message in chat when a player rejoins.")
-        .defaultValue(true)
+    public final Setting<NotifyMode> playSound = sgGeneral.add(new EnumSetting.Builder<NotifyMode>()
+        .name("play-sound")
+        .description("play a ding sound when someone leaves/rejoins.")
+        .defaultValue(NotifyMode.Both)
         .build()
     );
 
@@ -119,6 +120,10 @@ public class LogoutSpots extends Module {
     private static final Color RED = new Color(225, 25, 25);
     private static final Vector3d pos = new Vector3d();
 
+    private final SoundInstance sound = PositionedSoundInstance.master(
+        SoundEvents.BLOCK_NOTE_BLOCK_CHIME.value(), 1.2f, 1
+    );
+
     @Override
     public void onActivate() {
         lastPlayerList.addAll(mc.getNetworkHandler().getPlayerList());
@@ -143,8 +148,10 @@ public class LogoutSpots extends Module {
     private void onTick(TickEvent.Post event) {
         ArrayList<PlayerListEntry> playerList = new ArrayList<>(mc.getNetworkHandler().getPlayerList());
         playerList.removeIf(entry -> {
-            String entryName = entry.getDisplayName().getString();
-            return (entryName == null || entryName.isEmpty());
+            String entryName = Optional
+                .ofNullable(entry.getDisplayName())
+                .map(Text::getString).orElse("");
+            return entryName.isEmpty();
         });
 
         // Leaving Players
@@ -161,10 +168,11 @@ public class LogoutSpots extends Module {
                 logoutSpots.removeIf(logoutSpot -> logoutSpot.uuid.equals(logSpot.uuid) );
                 logoutSpots.add(logSpot);
 
-                if (notifyLeave.get()) warning("%s logged out at %d, %d, %d in the %s.",
+                if (sendMessages.get().onLeave()) warning("%s logged out at %d, %d, %d in the %s.",
                         logSpot.player.getEntityName(), logSpot.player.getBlockX(), logSpot.player.getBlockY(),
                         logSpot.player.getBlockZ(), logSpot.dimension.toString()
                 );
+                if (playSound.get().onLeave()) mc.getSoundManager().play(sound);
 
                 break;
             }
@@ -179,12 +187,13 @@ public class LogoutSpots extends Module {
                 LogoutSpot logSpot = iterator.next();
                 if (!logSpot.uuid.equals(entry.getProfile().getId())) continue;
 
-                if (notifyRejoin.get()) warning("%s logged back in at %d, %d, %d in the %s.",
-                        logSpot.player.getEntityName(), logSpot.player.getBlockX(), logSpot.player.getBlockY(),
-                        logSpot.player.getBlockZ(), logSpot.dimension.toString()
+                if (sendMessages.get().onJoin()) warning("%s logged back in at %d, %d, %d in the %s.",
+                    logSpot.player.getEntityName(), logSpot.player.getBlockX(), logSpot.player.getBlockY(),
+                    logSpot.player.getBlockZ(), logSpot.dimension.toString()
                 );
-                iterator.remove();
+                if (playSound.get().onJoin()) mc.getSoundManager().play(sound);
 
+                iterator.remove();
                 break;
             }
         }
@@ -277,6 +286,21 @@ public class LogoutSpots extends Module {
             if (healthPercentage <= 0.333) color = RED;
             else if (healthPercentage <= 0.666) color = ORANGE;
             else color = GREEN;
+        }
+    }
+
+    public enum NotifyMode {
+        Join,
+        Leave,
+        Both,
+        None;
+
+        public boolean onLeave() {
+            return this == Both || this == Leave;
+        }
+
+        public boolean onJoin() {
+            return this == Both || this == Join;
         }
     }
 }
